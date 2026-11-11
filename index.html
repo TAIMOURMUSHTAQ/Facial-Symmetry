@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Facial Symmetry Assistant</title>
+<link rel="stylesheet" href="styles.css">
+<style>html, body { margin: 0; background: #111827; } #app { min-height: 100vh; }</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+  import { mount } from "./src/main.js";
+  window.fsa = mount(document.getElementById("app"), { lang: "en" });
+</script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Engine tests</title>
+<style>body{font:14px system-ui;background:#111827;color:#e2e8f0;padding:20px}.pass{color:#34d399}.fail{color:#fb7185}</style></head>
+<body>
+<h1>Facial Symmetry engine tests (synthetic patients)</h1>
+<ul id="out"></ul>
+<script type="module">
+import { analyzeAll } from "../src/engine/analyze.js";
+import { buildFindings, reviewed } from "../src/engine/findings.js";
+import { findPatterns, grade } from "../src/engine/patterns.js";
+import { reason } from "../src/engine/reason.js";
+import { compareVisits, trend } from "../src/engine/compare.js";
+import { MemoryStore } from "../src/store/index.js";
+
+const BASE = { browR: .55, browL: .55, apR: .3, apL: .3, mrd1R: .14, mrd1L: .14, mrd2R: .16, mrd2L: .16, gxR: 0, gxL: 0, gyR: 0, gyL: 0, fwR: .9, fwL: .9,
+  mcxR: .75, mcxL: .75, mcyR: 1.6, mcyL: 1.6, llR: 1.75, llL: 1.75, ulR: 1.45, ulL: 1.45, alaR: 1, alaL: 1, chzR: -.3, chzL: -.3, faceR: 1.6, faceL: 1.6,
+  chinX: 0, jaw: 2.3, lipOpen: .02, mouthW: 1.5, tongue: 0, jawBS: 0 };
+let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 0.006;
+function rec(n, fn) {
+  const frames = [];
+  for (let i = 0; i < n; i++) {
+    const m = { ...BASE }; Object.keys(m).forEach(k => { m[k] += rnd(); });
+    Object.assign(m, fn ? fn(m, i, n) : {});
+    frames.push({ t: i * 33, m, pose: { roll: 0, pitch: 0, yaw: 0 }, ok: true, still: true });
+  }
+  return { frames, total: n, noFace: 0, badPose: 0 };
+}
+// a side-specific movement scaled by "strength" per side (1 = normal, 0 = none)
+function exam({ R = 1, L = 1, browR = R, browL = L, eyeR = R, eyeL = L, droopL = 0, extra = {} } = {}) {
+  return {
+    rest: rec(150, m => ({ mcyL: m.mcyL + droopL })),
+    brow: rec(120, m => ({ browR: m.browR + .15 * browR, browL: m.browL + .15 * browL })),
+    eye_gentle: rec(120, m => ({ apR: .3 * (1 - .95 * eyeR), apL: .3 * (1 - .95 * eyeL) })),
+    eye_tight: rec(120, m => ({ apR: .3 * (1 - .97 * eyeR), apL: .3 * (1 - .97 * eyeL) })),
+    snarl: rec(120, m => ({ alaR: m.alaR - .06 * R, ulR: m.ulR - .06 * R, alaL: m.alaL - .06 * L, ulL: m.ulL - .06 * L })),
+    smile: rec(120, m => ({ mcxR: m.mcxR + .15 * R, mcyR: m.mcyR - .12 * R, mcxL: m.mcxL + .15 * L, mcyL: m.mcyL - .12 * L })),
+    pucker: rec(120, m => ({ mcxR: m.mcxR - .12 * R, mcxL: m.mcxL - .12 * L })),
+    lower_teeth: rec(120, m => ({ llR: m.llR + .1 * R, llL: m.llL + .1 * L })),
+    ...extra
+  };
+}
+function run(records, history = {}, checklist = {}, patient = {}) {
+  const A = analyzeAll(records), F = reviewed(buildFindings(A), {}), P = findPatterns(F, A), G = grade(P, A, F);
+  const R = reason({ F, P, history, checklist, patient });
+  return { A, F, P, G, R, top: R.supported.slice(0, 4).map(r => r.id), flags: R.flags.map(f => f.title) };
+}
+
+const tests = [];
+const test = (name, fn) => { try { const r = fn(); tests.push({ name, ok: r === true, info: r === true ? "" : JSON.stringify(r) }); } catch (e) { tests.push({ name, ok: false, info: e.stack }); } };
+
+test("Left peripheral palsy -> peripheral pattern, left side, Bell's top, HB IV-V, eye alert", () => {
+  const o = run(exam({ L: .2, droopL: .1 }), { onset: "days", duration: "lt72h" });
+  const ok = o.P.facial === "peripheral" && o.P.side === "L" && o.top[0] === "bells" && ["IV", "V"].includes(o.G.hb) && o.flags.includes("Protect the eye");
+  return ok || { facial: o.P.facial, side: o.P.side, top: o.top, hb: o.G.hb, flags: o.flags };
+});
+test("Central pattern (forehead spared) + sudden + arm weakness -> stroke emergency", () => {
+  const o = run(exam({ R: 1, L: .3, browL: 1, eyeL: .93 }), { onset: "sudden", limb_weakness: "yes" });
+  const ok = o.P.facial === "central" && o.P.side === "L" && o.top[0] === "stroke" && o.flags.includes("Possible stroke");
+  return ok || { facial: o.P.facial, side: o.P.side, top: o.top, flags: o.flags };
+});
+test("Normal face -> no pattern, normal variation, no red flags", () => {
+  const o = run(exam());
+  const ok = o.P.facial === "none" && o.G.applicable === false && o.flags.length === 0 && o.top.includes("normal_variation");
+  return ok || { facial: o.P.facial, top: o.top, flags: o.flags, F: o.F.map(f => f.text) };
+});
+test("Fatigable ptosis on upgaze hold -> myasthenia top", () => {
+  const ex = exam({ extra: { upgaze_hold: rec(900, (m, i, n) => ({ mrd1L: .14 - .08 * i / n, mrd1R: .14 })) } });
+  ex.rest = rec(150, m => ({ mrd1L: .1 }));
+  const o = run(ex, { fluctuating: "yes" });
+  return o.top[0] === "myasthenia" || { top: o.top, F: o.F.map(f => f.type) };
+});
+test("Ptosis + limited adduction same eye + larger pupil -> CN III emergency", () => {
+  const ex = exam({ extra: {
+    gaze_left: rec(90, m => ({ gxR: m.gxR + .05, gxL: m.gxL + .25 })),   // right eye adducts poorly
+    gaze_right: rec(90, m => ({ gxR: m.gxR - .25, gxL: m.gxL - .25 }))
+  } });
+  ex.rest = rec(150, m => ({ mrd1R: .04 }));
+  const o = run(ex, {}, { pupils: "R_larger" });
+  const ok = o.top[0] === "cn3" && o.flags.some(f => f.startsWith("Third nerve"));
+  return ok || { top: o.top, flags: o.flags, gaze: o.P.gazeLimits, ptosis: o.P.ptosisSide };
+});
+test("Clinician rejecting the weakness findings removes the palsy pattern", () => {
+  const records = exam({ L: .2 });
+  const A = analyzeAll(records), F0 = buildFindings(A);
+  const review = Object.fromEntries(F0.filter(f => f.type === "weak" || f.type === "incomplete_closure").map(f => [f.key, { decision: "reject" }]));
+  const P = findPatterns(reviewed(F0, review), A);
+  return P.facial === "none" || { facial: P.facial };
+});
+test("Tongue deviates left with wasting -> CN XII", () => {
+  const o = run({ ...exam(), tongue: { frames: [], total: 0, rating: { deviation: "L", wasting: "L", fasciculations: "no" } } });
+  return o.top[0] === "cn12" || { top: o.top };
+});
+test("Jaw deviates right on opening + weak right masseter -> CN V motor", () => {
+  const o = run({ ...exam(), jaw: rec(120, m => ({ jaw: m.jaw + .6, chinX: -.12 })) }, {}, { masseter: "weakR" });
+  return o.top[0] === "cn5_motor" || { top: o.top };
+});
+test("One-sided twitching during observation -> hemifacial spasm", () => {
+  const o = run({ ...exam(), observe: rec(360, (m, i) => (i % 60 < 6 ? { apR: .05 } : {})) });
+  return o.top[0] === "hemifacial_spasm" || { top: o.top, F: o.F.map(f => f.text) };
+});
+test("Bilateral weakness + limb weakness -> GBS emergency", () => {
+  const o = run(exam({ R: .15, L: .15 }), { limb_weakness: "yes", recent_infection: "yes" });
+  const ok = o.P.facial === "bilateral" && o.flags.some(f => f.startsWith("Bilateral facial weakness"));
+  return ok || { facial: o.P.facial, top: o.top, flags: o.flags };
+});
+
+// minimal report-shaped object from a run, as buildReport would produce
+const asReport = (o, date) => ({ generatedAt: date, grading: o.G.applicable ? { houseBrackmannEstimate: o.G.hb, side: o.G.side, sunnybrookEstimate: { composite: o.G.sunnybrook.composite } } : null,
+  pattern: { facial: o.P.facial }, steps: Object.fromEntries(Object.entries(o.A.steps).map(([k, v]) => [k, { valid: v.valid, sym: v.sym }])),
+  findings: o.F.map(f => ({ type: f.type, step: f.step, side: f.side, text: f.text, finalSeverity: ["None", "Mild", "Moderate", "Marked"][f.sev] })) });
+test("Recovery between visits -> improved, HB lower, smile symmetry up", () => {
+  const v1 = asReport(run(exam({ L: .2 })), "2026-11-01T10:00:00Z"), v2 = asReport(run(exam({ L: .7 })), "2026-11-15T10:00:00Z");
+  const c = compareVisits(v2, v1), smile = c.rows.find(r => r.id === "smile"), hb = c.rows.find(r => r.id === "hb");
+  const ok = c.overall === "better" && hb.dir === "better" && smile.dir === "better" && c.days === 14;
+  return ok || { overall: c.overall, hb, smile, days: c.days };
+});
+test("Recovered to normal -> HB 'not graded' counts as improved; findings resolved", () => {
+  const v1 = asReport(run(exam({ L: .2 })), "2026-11-01T10:00:00Z"), v2 = asReport(run(exam()), "2026-12-01T10:00:00Z");
+  const c = compareVisits(v2, v1);
+  const ok = c.rows[0].dir === "better" && c.resolved.length > 0 && c.newFindings.length === 0;
+  return ok || { hb: c.rows[0], resolved: c.resolved.length, newF: c.newFindings.map(f => f.text) };
+});
+test("Trend table has one column per visit", () => {
+  const vs = [.2, .5, .9].map((L, i) => ({ number: i + 1, date: "2026-11-0" + (i + 1), report: asReport(run(exam({ L })), "2026-11-0" + (i + 1)) }));
+  const tr = trend(vs), smile = tr.rows.find(r => r.label.startsWith("Smile"));
+  const ok = tr.cols.length === 3 && smile && parseInt(smile.values[0]) < parseInt(smile.values[2]);
+  return ok || tr;
+});
+await (async () => {
+  const st = new MemoryStore();
+  await st.savePatient({ id: "p1", ref: "A" }); await st.saveVisit({ id: "v2", patientId: "p1", number: 2, date: "2026-11-02" }); await st.saveVisit({ id: "v1", patientId: "p1", number: 1, date: "2026-11-01" });
+  const vs = await st.listVisits("p1"); await st.deletePatient("p1");
+  tests.push({ name: "Store: visits sorted by date; deleting a patient removes their visits", ok: vs.map(v => v.id).join() === "v1,v2" && (await st.listVisits("p1")).length === 0, info: "" });
+})();
+
+document.getElementById("out").innerHTML = tests.map(t => `<li class="${t.ok ? "pass" : "fail"}">${t.ok ? "PASS" : "FAIL"} ${t.name}${t.info ? "<br><code>" + t.info.replace(/</g, "&lt;") + "</code>" : ""}</li>`).join("");
+window.__results = tests;
+</script>
+</body>
+</html>

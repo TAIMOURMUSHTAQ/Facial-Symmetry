@@ -1,0 +1,4 @@
+# Model and WASM files are downloaded at build time (scripts/fetch-vendor.sh); ~23 MB, kept out of git.
+vendor/
+.DS_Store
+*.log
