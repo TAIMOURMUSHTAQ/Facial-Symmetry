@@ -7,7 +7,8 @@ export const DEFAULTS = {
   apiBase: "/api/facial-symmetry",
   apiHeaders: {},             // e.g. { "X-CSRF-TOKEN": "..." } for Laravel
   includePatientRef: false,   // the optional patient reference is left out of exported reports unless true
-  aiEndpoint: null,           // phase 3: Laravel route that proxies the ChatGPT API
+  aiEndpoint: new URL("../api/ai", import.meta.url).href.replace(/\/$/, ""), // AI proxy (server.py, or a Laravel route); null disables AI
+  autoStartCamera: true,      // open straight into scanning when the model is ready
   onExport: null              // optional callback(report) so a host page (Laravel) can receive the report
 };
 

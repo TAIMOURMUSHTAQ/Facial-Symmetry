@@ -1,0 +1,122 @@
+{
+  "model": "medgemma1.5",
+  "endpoint": "http://localhost:11434/v1",
+  "results": [
+    {
+      "case": "bells",
+      "title": "Acute left peripheral facial palsy",
+      "mode": "blind",
+      "engineTop": "bells",
+      "engineOk": true,
+      "json": true,
+      "top1": true,
+      "top3": true,
+      "side": true,
+      "emergency": false,
+      "overclaim": false,
+      "modelTop": "Bell's palsy",
+      "modelSide": "left",
+      "redFlags": [
+        "Stroke"
+      ],
+      "ms": 32201,
+      "raw": "{\n  \"summary\": \"The patient presents with new left-sided facial weakness, characterized by lower mouth corner, reduced eyebrow raise, reduced eye closure, incomplete eye closure, and reduced lip movements. This suggests a neurological cause affecting the left side of the face.\",\n  \"weaker_side\": \"left\",\n  \"possibilities\": [\n    {\n      \"condition\": \"Bell's palsy\",\n      \"why\": \"The patient has new left-sided facial weakness involving both upper and lower face.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Stroke\",\n      \"why\": \"The patient has new left-sided facial weakness.\",\n      \"urgency\": \"emergency\"\n    },\n    {\n      \"condition\": \"Other peripheral facial nerve palsy\",\n      \"why\": \"The patient has new left-sided facial weakness.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Central facial palsy\",\n      \"why\": \"The patient has new left-sided facial weakness.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Tumour\",\n      \"why\": \"The patient has new left-sided facial weakness.\",\n      \"urgency\": \"soon\"\n    }\n  ],\n  \"red_flags\": [\n    \"Stroke\"\n  ],\n  \"next_checks\": [\n    \"Assess for other neurological signs (e.g., limb weakness, sensory loss, speech difficulties).\",\n    \"Check for fever or recent infection.\",\n    \"Ask about recent head trauma.\",\n    \"Check for rash or blisters around the ear/palate.\",\n    \"Check for hearing loss or tinnitus.\"\n  ],\n  \"disagreements\": [\n    \"The rule engine suggests Bell's palsy is most likely. However, the patient has new facial weakness, which could be due to stroke, requiring urgent investigation.\",\n    \"The rule engine suggests other peripheral facial nerve palsy is a possibility. However, the weakness involves both upper and lower face, making central facial palsy more likely.\",\n    \"The rule engine suggests Central facial palsy is a possibility. However, the weakness involves both upper and lower face, making peripheral facial nerve palsy more likely.\"\n  ]\n}"
+    },
+    {
+      "case": "bells",
+      "title": "Acute left peripheral facial palsy",
+      "mode": "assist",
+      "engineTop": "bells",
+      "engineOk": true,
+      "json": true,
+      "top1": true,
+      "top3": true,
+      "side": true,
+      "emergency": true,
+      "overclaim": false,
+      "modelTop": "Bell's palsy",
+      "modelSide": "left",
+      "redFlags": [
+        "Peripheral facial palsy: treatment window"
+      ],
+      "ms": 30794,
+      "raw": "{\n  \"summary\": \"The patient presents with new left-sided facial weakness affecting the upper and lower face, including reduced eye closure and eyebrow raise. There is also evidence of possible eye-to-mouth synkinesis. The asymmetry is moderate to marked.\",\n  \"weaker_side\": \"left\",\n  \"possibilities\": [\n    {\n      \"condition\": \"Bell's palsy\",\n      \"why\": \"The pattern of upper and lower face weakness suggests a peripheral facial nerve palsy.\",\n      \"urgency\": \"urgent\"\n    },\n    {\n      \"condition\": \"Exposure keratopathy risk\",\n      \"why\": \"The patient's left eye does not close fully, increasing the risk of corneal exposure.\",\n      \"urgency\": \"urgent\"\n    },\n    {\n      \"condition\": \"Ramsay Hunt syndrome\",\n      \"why\": \"The combination of facial palsy and ear pain raises suspicion for Ramsay Hunt syndrome.\",\n      \"urgency\": \"urgent\"\n    },\n    {\n      \"condition\": \"Post-paralytic synkinesis\",\n      \"why\": \"The movement of the left mouth corner during eye closure suggests possible synkinesis.\",\n      \"urgency\": \"routine\"\n    },\n    {\n      \"condition\": \"Compressive lesion\",\n      \"why\": \"A peripheral pattern can sometimes be caused by a central lesion, although less likely.\",\n      \"urgency\": \"soon\"\n    }\n  ],\n  \"red_flags\": [\n    \"Peripheral facial palsy: treatment window\"\n  ],\n  \"next_checks\": [\n    \"Assess for ear pain or vesicles in the ear canal or auricle\",\n    \"Check for hearing loss or tinnitus\",\n    \"Check for severe headache\",\n    \"Ask about recent rash or blisters on the palate or ear\",\n    \"Assess for other neurological symptoms (e.g., facial numbness, limb weakness)\"\n  ],\n  \"disagreements\": []\n}"
+    },
+    {
+      "case": "cn3",
+      "title": "Right ptosis, poor right adduction, right pupil larger",
+      "mode": "blind",
+      "engineTop": "cn3",
+      "engineOk": true,
+      "json": true,
+      "top1": false,
+      "top3": true,
+      "side": true,
+      "emergency": false,
+      "overclaim": false,
+      "modelTop": "Bell's palsy",
+      "modelSide": "right",
+      "redFlags": [
+        "Stroke"
+      ],
+      "ms": 32130,
+      "raw": "{\n  \"summary\": \"The patient presents with acute onset facial asymmetry and double vision. The right upper eyelid is moderately drooped, and the right eye exhibits reduced adduction when looking left. These findings suggest a potential neurological issue affecting the facial nerve or oculomotor nerve.\",\n  \"weaker_side\": \"right\",\n  \"possibilities\": [\n    {\n      \"condition\": \"Bell's palsy\",\n      \"why\": \"The acute onset of unilateral facial weakness and double vision points towards Bell's palsy.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Cranial nerve palsy (CN III)\",\n      \"why\": \"The reduced adduction of the right eye when looking left indicates a possible issue with the oculomotor nerve (CN III).\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Stroke\",\n      \"why\": \"The sudden onset of neurological symptoms like facial weakness and double vision raises concern for a stroke.\",\n      \"urgency\": \"emergency\"\n    },\n    {\n      \"condition\": \"Tumour\",\n      \"why\": \"A slow-growing lesion affecting the facial nerve or its pathway could cause these symptoms.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Other\",\n      \"why\": \"Various other causes of facial nerve or oculomotor nerve dysfunction exist.\",\n      \"urgency\": \"soon\"\n    }\n  ],\n  \"red_flags\": [\n    \"Stroke\"\n  ],\n  \"next_checks\": [\n    \"Check pupils (size and light reaction) on both sides\",\n    \"Check forehead wrinkling on both sides\",\n    \"Check eye movements (abduction, elevation, depression) on both sides\",\n    \"Check facial muscle strength (e.g., smile, frown) on both sides\",\n    \"Check sensation of the face (light touch) on both sides\"\n  ],\n  \"disagreements\": []\n}"
+    },
+    {
+      "case": "cn3",
+      "title": "Right ptosis, poor right adduction, right pupil larger",
+      "mode": "assist",
+      "engineTop": "cn3",
+      "engineOk": true,
+      "json": true,
+      "top1": true,
+      "top3": true,
+      "side": true,
+      "emergency": true,
+      "overclaim": false,
+      "modelTop": "Third nerve palsy",
+      "modelSide": "right",
+      "redFlags": [
+        "Third nerve palsy with pupil involvement or headache"
+      ],
+      "ms": 22099,
+      "raw": "{\n  \"summary\": \"The patient presents with a new facial asymmetry, specifically a right upper eyelid droop and reduced movement of the right eye when looking left. These findings are associated with a possible third nerve palsy, although the pattern is not consistent. A headache is also present.\",\n  \"weaker_side\": \"right\",\n  \"possibilities\": [\n    {\n      \"condition\": \"Third nerve palsy\",\n      \"why\": \"The patient has a right upper eyelid droop and reduced adduction of the right eye.\",\n      \"urgency\": \"emergency\"\n    },\n    {\n      \"condition\": \"Myasthenia gravis\",\n      \"why\": \"The patient has facial weakness, although the pattern is not consistent.\",\n      \"urgency\": \"urgent\"\n    }\n  ],\n  \"red_flags\": [\n    \"Third nerve palsy with pupil involvement or headache\"\n  ],\n  \"next_checks\": [\n    \"Check pupil size and light reaction (left side)\",\n    \"Check for ptosis on the left side\",\n    \"Check for eye movement limitation on the left side\",\n    \"Ask about double vision\",\n    \"Ask about headache severity and characteristics\",\n    \"Ask about other facial weakness or double vision\"\n  ],\n  \"disagreements\": []\n}"
+    },
+    {
+      "case": "parkinsonism",
+      "title": "Reduced expression both sides, low blink rate, tremor",
+      "mode": "blind",
+      "engineTop": "parkinsonism",
+      "engineOk": true,
+      "json": true,
+      "top1": false,
+      "top3": false,
+      "side": true,
+      "emergency": false,
+      "overclaim": false,
+      "modelTop": "Facial nerve palsy (bilateral)",
+      "modelSide": "both",
+      "redFlags": [],
+      "ms": 32984,
+      "raw": "{\n  \"summary\": \"The patient presents with reduced facial movements on both sides, particularly eyebrow raise, smile, and lip pucker. This suggests a potential issue affecting facial muscle control or nerve supply on both sides.\",\n  \"weaker_side\": \"both\",\n  \"possibilities\": [\n    {\n      \"condition\": \"Facial nerve palsy (bilateral)\",\n      \"why\": \"Reduced movement on both sides, including eyebrow raise, smile, and lip pucker.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Myasthenia gravis\",\n      \"why\": \"Reduced facial muscle strength and movement.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Bell's palsy (bilateral)\",\n      \"why\": \"Reduced facial movements on both sides.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Stroke (bilateral)\",\n      \"why\": \"Reduced facial movements on both sides.\",\n      \"urgency\": \"emergency\"\n    },\n    {\n      \"condition\": \"Amyotrophic lateral sclerosis (ALS)\",\n      \"why\": \"Reduced facial muscle strength and movement.\",\n      \"urgency\": \"soon\"\n    }\n  ],\n  \"red_flags\": [],\n  \"next_checks\": [\n    \"Assess for other neurological signs (e.g., limb weakness, sensory changes, speech difficulties).\",\n    \"Check for ptosis (drooping eyelid) on both sides.\",\n    \"Ask about recent illness or infection.\",\n    \"Check for dry mouth or difficulty swallowing.\",\n    \"Consider asking the patient to smile widely and frown deeply.\",\n    \"Check for upper motor neuron signs (e.g., hyperreflexia).\",\n    \"Check for lower motor neuron signs (e.g., atrophy, fasciculations).\",\n    \"Ask about double vision.\",\n    \"Check for neck stiffness.\",\n    \"Check for sensory loss in the face or limbs.\"\n  ],\n  \"disagreements\": []\n}"
+    },
+    {
+      "case": "parkinsonism",
+      "title": "Reduced expression both sides, low blink rate, tremor",
+      "mode": "assist",
+      "engineTop": "parkinsonism",
+      "engineOk": true,
+      "json": true,
+      "top1": true,
+      "top3": true,
+      "side": true,
+      "emergency": false,
+      "overclaim": false,
+      "modelTop": "Parkinsonism",
+      "modelSide": "both",
+      "redFlags": [],
+      "ms": 30391,
+      "raw": "{\n  \"summary\": \"The patient presents with reduced facial movements on both sides, including eyebrow raise, smile, lip pucker, and lower lip depression. This suggests a bilateral facial weakness or hypomimia.\",\n  \"weaker_side\": \"both\",\n  \"possibilities\": [\n    {\n      \"condition\": \"Parkinsonism\",\n      \"why\": \"Reduced facial expression (hypomimia) is a common feature.\",\n      \"urgency\": \"routine\"\n    },\n    {\n      \"condition\": \"Other causes of bilateral facial weakness\",\n      \"why\": \"The reduced movement on both sides could indicate a systemic or neurological cause.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Guillain-Barré syndrome\",\n      \"why\": \"Bilateral facial weakness can be a presenting feature.\",\n      \"urgency\": \"emergency\"\n    },\n    {\n      \"condition\": \"Compressive lesion\",\n      \"why\": \"A lesion affecting the facial nerve bilaterally could cause reduced movement.\",\n      \"urgency\": \"soon\"\n    }\n  ],\n  \"red_flags\": [],\n  \"next_checks\": [\n    \"Check for other neurological signs (e.g., limb weakness, sensory changes, gait disturbance).\",\n    \"Ask about other symptoms (e.g., tremor, stiffness, slowness of movement).\",\n    \"Consider asking about recent infections or systemic symptoms.\",\n    \"Review past medical history for relevant conditions.\",\n    \"Consider asking about family history of similar symptoms.\"\n  ],\n  \"disagreements\": []\n}"
+    }
+  ]
+}

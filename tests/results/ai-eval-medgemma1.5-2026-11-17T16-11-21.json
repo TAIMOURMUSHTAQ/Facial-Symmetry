@@ -1,0 +1,26 @@
+{
+  "model": "medgemma1.5",
+  "endpoint": "http://localhost:11434/v1",
+  "results": [
+    {
+      "case": "stroke",
+      "title": "Left lower-face weakness, forehead moves, sudden, arm weak",
+      "mode": "therapist-led",
+      "expected": "/stroke|central|upper motor|cerebrovascular/i",
+      "json": true,
+      "top1": true,
+      "top3": true,
+      "side": true,
+      "emergency": true,
+      "overclaim": false,
+      "modelTop": "Stroke",
+      "modelSide": "left",
+      "redFlags": [
+        "Stroke",
+        "Transient Ischemic Attack (TIA)"
+      ],
+      "ms": 38941,
+      "raw": "{\n  \"answer\": \"The patient reports sudden onset of slurred speech and left arm weakness.\",\n  \"summary\": \"The patient presents with sudden onset slurred speech and left arm weakness. The 'Relaxed face' capture shows equal right and left side measurements. The 'Raise eyebrows' capture shows equal increase in eyebrow height. The 'Close eyes tightly' capture shows slightly less movement of the left eye opening. The 'Big smile' capture shows less movement of the left mouth corner height and distance from midline. The 'Pucker lips' capture shows less movement of the left mouth corner distance from midline.\",\n  \"weaker_side\": \"left\",\n  \"possibilities\": [\n    {\n      \"condition\": \"Stroke\",\n      \"why\": \"Sudden onset neurological symptoms like slurred speech and unilateral weakness are highly suggestive of stroke.\",\n      \"urgency\": \"emergency\"\n    },\n    {\n      \"condition\": \"Transient Ischemic Attack (TIA)\",\n      \"why\": \"Symptoms are sudden onset, but may resolve completely, fitting TIA criteria.\",\n      \"urgency\": \"urgent\"\n    },\n    {\n      \"condition\": \"Bell's Palsy\",\n      \"why\": \"Can cause facial weakness, but typically develops more gradually and often involves the entire side of the face.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Migraine with Aura\",\n      \"why\": \"Can cause transient neurological symptoms including speech changes and weakness.\",\n      \"urgency\": \"soon\"\n    },\n    {\n      \"condition\": \"Seizure\",\n      \"why\": \"Can cause transient neurological deficits.\",\n      \"urgency\": \"soon\"\n    }\n  ],\n  \"red_flags\": [\n    \"Stroke\",\n    \"Transient Ischemic Attack (TIA)\"\n  ],\n  \"next_captures\": [\n    {\n      \"label\": \"Check pupil size\",\n      \"why\": \"To assess for potential stroke or other neurological causes.\",\n      \"seconds\": \"0\"\n    },\n    {\n      \"label\": \"Check facial sensation\",\n      \"why\": \"To assess for potential stroke or other neurological causes.\",\n      \"seconds\": \"0\"\n    },\n    {\n      \"label\": \"Check carotid bruits\",\n      \"why\": \"To assess for potential stroke.\",\n      \"seconds\": \"0\"\n    },\n    {\n      \"label\": \"Check blood pressure\",\n      \"why\": \"To assess for potential stroke or other causes.\",\n      \"seconds\": \"0\"\n    },\n    {\n      \"label\": \"Check heart rate\",\n      \"why\": \"To assess for potential stroke or other causes.\",\n      \"seconds\": \"0\"\n    }\n  ],\n  \"bedside_checks\": [\n    \"Check pupil size\",\n    \"Check facial sensation\",\n    \"Check carotid bruits\",\n    \"Check blood pressure\",\n    \"Check heart rate\"\n  ]\n}"
+    }
+  ]
+}

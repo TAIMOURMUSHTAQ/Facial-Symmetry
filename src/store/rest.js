@@ -31,6 +31,11 @@ export class RestStore {
   getVisit(id) { return this.req("GET", `/visits/${encodeURIComponent(id)}`); }
   saveVisit(v) { return this.req("PUT", `/visits/${encodeURIComponent(v.id)}`, v).then(() => v); }
   deleteVisit(id) { return this.req("DELETE", `/visits/${encodeURIComponent(id)}`); }
+  listTemplates() { return this.req("GET", "/templates").then(x => x || []); }
+  saveTemplate(t) { return this.req("PUT", `/templates/${encodeURIComponent(t.id)}`, t).then(() => t); }
+  deleteTemplate(id) { return this.req("DELETE", `/templates/${encodeURIComponent(id)}`); }
+  getSetting(k) { return this.req("GET", `/settings/${encodeURIComponent(k)}`).then(x => (x ? x.value : null)); }
+  setSetting(k, value) { return this.req("PUT", `/settings/${encodeURIComponent(k)}`, { key: k, value }); }
   async exportAll() {
     const patients = await this.listPatients(), visits = [];
     for (const p of patients) visits.push(...await this.listVisits(p.id));

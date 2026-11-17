@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-# Serves the app at http://localhost:8080 (camera access needs localhost or https).
+# Runs the app at http://localhost:8080 with the AI proxy.
+# Local default: MedGemma via Ollama. To use OpenAI locally: OPENAI_API_KEY=sk-... ./scripts/serve.sh
 cd "$(dirname "$0")/.."
-python3 -m http.server "${1:-8080}" --bind 127.0.0.1
+exec python3 server.py "${1:-8080}"

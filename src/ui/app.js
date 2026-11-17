@@ -1,27 +1,25 @@
-/* Application shell: patient -> history -> guided exam -> results -> review and report. */
+/* Application shell, therapist-led: the therapist decides what to examine.
+   Examine (free captures) -> Case notes (optional) -> Findings and AI -> Save and report. */
 import { DEFAULTS } from "../config.js";
 import { t, setLang, dir } from "../i18n/index.js";
 import { html, raw, uid } from "../util.js";
 import { loadLandmarker } from "../vision/loader.js";
 import { Vision } from "../vision/source.js";
-import { STEPS, STEP, GROUPS, stepScore } from "../exam/protocol.js";
-import { HISTORY, YN_OPTIONS } from "../knowledge/history.js";
-import { analyzeAll } from "../engine/analyze.js";
-import { buildFindings, reviewed } from "../engine/findings.js";
-import { findPatterns, grade } from "../engine/patterns.js";
-import { reason } from "../engine/reason.js";
-import { T } from "../engine/thresholds.js";
+import { METRICS, baseline, summarizeAll } from "../engine/measure.js";
+import { safetyFlags } from "../knowledge/safety.js";
 import { createStore, MemoryStore } from "../store/index.js";
 import { renderResults, bindResults } from "./results.js";
-import { renderReport, bindReport, printHTML } from "./report.js";
-import { renderPatients, bindPatients, refreshPatients, showPatients, CHRONIC } from "./patients.js";
-import { stepSummary } from "./summary.js";
+import { renderReport, bindReport, printHTML, buildReport } from "./report.js";
+import { renderPatients, bindPatients, refreshPatients, showPatients } from "./patients.js";
+import { renderNotes, bindNotes } from "./notes.js";
+import { aiStatus, askAI, fingerprint } from "../ai/assist.js";
 
-const SCREENS = [["patient", "Patient"], ["history", "History"], ["exam", "Guided exam"], ["results", "Results"], ["report", "Review and report"]];
+const SCREENS = [["exam", "Examine"], ["notes", "Case notes"], ["results", "Findings and AI"], ["report", "Save and report"]];
+const DURATIONS = [[0, "Photo"], [3, "3 s"], [5, "5 s"], [10, "10 s"], [30, "30 s"]];
 
 export function newSession() {
-  return { id: uid(), startedAt: new Date().toISOString(), patientId: null, patient: {}, history: {}, checklist: {}, records: {}, ratings: {}, skipped: {},
-    review: {}, clinician: "", impression: "", notes: "", locked: false, report: null, saved: null };
+  return { id: uid(), startedAt: new Date().toISOString(), patientId: null, patient: { age: "", sex: "" }, notes: "", fields: {}, safety: {},
+    captures: [], clinician: "", impression: "", plan: "", locked: false, report: null, saved: null, ai: null, saveError: null };
 }
 
 export class App {
@@ -29,18 +27,26 @@ export class App {
     this.root = root; this.cfg = { ...DEFAULTS, ...options };
     setLang(this.cfg.lang);
     root.classList.add("fsa"); root.dir = dir(); root.lang = this.cfg.lang;
-    this.session = newSession(); this.screen = "patient"; this.cur = "rest"; this.open = new Set();
-    this.vision = null; this.rec = null; this.restM = null; this._msgT = 0;
-    this.store = new MemoryStore(); this.patients = []; this.prevVisits = []; this.pui = { view: "list", selId: null, q: "" };
-    this.renderShell(); this.compute(); this.go("patient");
+    this.session = newSession(); this.screen = "exam"; this.open = new Set();
+    this.vision = null; this.rec = null; this._msgT = 0; this.m = []; this.flags = [];
+    this.store = new MemoryStore(); this.patients = []; this.prevVisits = []; this.templates = []; this.historyFields = [];
+    this.pui = { view: "list", selId: null, q: "" }; this.ai = { status: null, busy: false, error: null }; this.saveTarget = "";
+    this.renderShell(); this.compute(); this.renderPatientChip(); this.go("exam");
     this.ready = this.initStore();
+    aiStatus(this.cfg).then(st => { this.ai.status = st; if (this.screen === "results") renderResults(this); });
     this.loadModel();
   }
 
   async initStore() {
     this.store = await createStore(this.cfg);
-    try { await refreshPatients(this); } catch (err) { console.error(err); }
+    try {
+      await refreshPatients(this);
+      this.templates = await this.store.listTemplates();
+      this.historyFields = (await this.store.getSetting("historyFields")) || [];
+    } catch (err) { console.error(err); }
+    this.renderCaptures(); this.renderComposer();
     if (this.screen === "patient") renderPatients(this);
+    if (this.screen === "notes") renderNotes(this);
   }
 
   $(s) { return this.root.querySelector(s); }
@@ -54,22 +60,22 @@ export class App {
   <div class="right">
     <span class="chip" id="fsa-curpt" hidden></span>
     <span class="chip">${t("Decision support only. Not a diagnosis.")}</span>
-    <button class="small" data-act="new-patient">${t("Patients")}</button>
+    <button class="small" data-act="patients">${t("Patients")}</button>
   </div>
 </header>
-<nav class="nav" aria-label="${t("Assessment steps")}">
+<nav class="nav" aria-label="${t("Sections")}">
   ${SCREENS.map(([id, name], i) => html`<button data-go="${id}"><span class="n">${i + 1}</span>${t(name)}</button>`)}
 </nav>
 <main>
   <section data-screen="patient"><div id="fsa-patients"></div></section>
-  <section data-screen="history" class="narrow stack">${raw(this.historyHTML())}</section>
   <section data-screen="exam" class="exam">${raw(this.examHTML())}</section>
+  <section data-screen="notes" class="narrow"><div id="fsa-notes"></div></section>
   <section data-screen="results"><div id="fsa-results"></div></section>
   <section data-screen="report" class="narrow"><div id="fsa-report"></div></section>
 </main>
 <div class="print" id="fsa-print"></div>`.s;
-    this.bindShell(); this.bindForms(); this.bindExam();
-    bindResults(this); bindReport(this); bindPatients(this);
+    this.bindShell(); this.bindExam();
+    bindNotes(this); bindResults(this); bindReport(this); bindPatients(this);
   }
 
   go(screen) {
@@ -77,8 +83,8 @@ export class App {
     this.$$("[data-screen]").forEach(s => { s.hidden = s.dataset.screen !== screen; });
     this.$$(".nav [data-go]").forEach(b => b.setAttribute("aria-current", b.dataset.go === screen ? "step" : "false"));
     if (screen === "patient") showPatients(this);
-    if (screen === "history") this.renderHistoryFlags();
-    if (screen === "exam") this.renderStep();
+    if (screen === "exam") { this.renderComposer(); this.renderCaptures(); }
+    if (screen === "notes") renderNotes(this);
     if (screen === "results") { this.compute(); renderResults(this); }
     if (screen === "report") { this.compute(); renderReport(this); }
     if (this.root.getBoundingClientRect().top < 0) this.root.scrollIntoView({ block: "start" });
@@ -88,42 +94,56 @@ export class App {
     this.root.addEventListener("click", e => {
       const g = e.target.closest("[data-go]");
       if (g && this.root.contains(g)) { this.go(g.dataset.go); return; }
-      const a = e.target.closest("[data-act='new-patient']");
-      if (a) this.newPatient();
+      if (e.target.closest("[data-act='patients']")) { this.pui.view = this.pui.selId ? "detail" : "list"; this.go("patient"); }
     });
   }
 
-  hasUnsaved() {
+  compute() {
     const s = this.session;
-    return !s.locked && (Object.keys(s.records).length > 0 || Object.keys(s.ratings).length > 0);
+    this.m = summarizeAll(s.captures);
+    this.flags = safetyFlags(s.safety);
+    const ref = s.captures.find(c => c.reference && c.rec);
+    this.refBase = ref ? baseline(ref.rec) : null;
   }
 
-  /** Header button: back to the patient list (keeps the current assessment unless a new visit is started). */
-  newPatient() { this.pui.view = this.pui.selId ? "detail" : "list"; this.go("patient"); }
+  /* ---------------- sessions and patients ---------------- */
+  hasUnsaved() { const s = this.session; return !s.locked && s.captures.some(c => c.rec); }
 
-  /** Start a fresh assessment, for a saved patient or (p = null) as a quick assessment that is not saved. */
   async startVisit(p) {
-    if (this.hasUnsaved() && !confirm(t("Discard the current unsaved assessment and start a new one?"))) return;
-    this.cancelRecording(); this.session = newSession(); this.cur = "rest"; this.restM = null; this.open = new Set();
-    const s = this.session;
-    this.prevVisits = [];
+    if (this.hasUnsaved() && !confirm(t("Discard the current unsaved examination and start a new one?"))) return;
+    this.cancelRecording(true); this.session = newSession(); this.open = new Set(); this.saveTarget = ""; this.ai.error = null;
+    const s = this.session; this.prevVisits = [];
     if (p) {
       s.patientId = p.id; this.pui.selId = p.id; this.pui.view = "detail";
-      s.patient = { ref: p.ref || "", age: p.age || "", sex: p.sex || "" };
-      for (const k of CHRONIC) if (p.chronic && p.chronic[k]) s.history[k] = p.chronic[k];
+      s.patient = { age: p.age || "", sex: p.sex || "" };
+      s.fields = { ...(p.lastFields || {}) };   // the therapist's own history fields carry over; edit if changed
       this.prevVisits = await this.store.listVisits(p.id);
-      s.patient.reason = this.prevVisits.length ? "followup" : "";
     }
-    this.syncHistoryForm(); this.compute(); this.renderPatientChip(); this.go("history");
+    this.compute(); this.renderPatientChip(); this.go("exam");
   }
 
   renderPatientChip() {
     const el = this.$("#fsa-curpt"), s = this.session, p = s.patientId && this.patients.find(x => x.id === s.patientId);
     el.hidden = false;
-    el.textContent = p ? t("{p} · visit {n}", { p: p.ref || t("Unnamed patient"), n: this.prevVisits.length + 1 }) : t("Quick assessment (not saved)");
+    el.textContent = p ? t("{p} · visit {n}", { p: p.ref || t("Unnamed patient"), n: this.prevVisits.length + 1 }) : t("New examination (not saved yet)");
   }
 
-  /** Save the locked session as a visit of the current patient. */
+  async attachPatient(newRef) {
+    const s = this.session, target = this.saveTarget;
+    if (s.patientId || !target) return;
+    let p;
+    if (target === "new") {
+      const now = new Date().toISOString();
+      p = { id: uid(), ref: newRef || "", age: s.patient.age || "", sex: s.patient.sex || "", notes: "", createdAt: now, updatedAt: now, visitCount: 0 };
+      await this.store.savePatient(p); await refreshPatients(this);
+    } else p = await this.store.getPatient(target);
+    if (!p) throw new Error("patient not found");
+    s.patientId = p.id; this.pui.selId = p.id; this.pui.view = "detail";
+    s.patient = { age: s.patient.age || p.age || "", sex: s.patient.sex || p.sex || "" };
+    this.prevVisits = await this.store.listVisits(p.id);
+    this.saveTarget = "";
+  }
+
   async saveVisit() {
     const s = this.session;
     if (!s.patientId || !s.report) return null;
@@ -131,84 +151,38 @@ export class App {
     if (!p) return null;
     const number = (this.prevVisits.length ? Math.max(...this.prevVisits.map(v => v.number || 0)) : 0) + 1;
     const visit = { id: s.id, patientId: p.id, number, date: s.report.generatedAt, report: s.report };
-    if (this.saveEvidence) visit.evidence = Object.fromEntries(STEPS.filter(st => s.records[st.id] && s.records[st.id].evidence).map(st => [st.id, s.records[st.id].evidence]));
+    if (this.saveEvidence) visit.evidence = Object.fromEntries(s.captures.filter(c => c.rec && c.rec.evidence).map(c => [c.id, c.rec.evidence]));
     await this.store.saveVisit(visit);
-    const chronic = { ...(p.chronic || {}) };
-    for (const k of CHRONIC) if (s.history[k] && s.history[k] !== "unknown") chronic[k] = s.history[k];
-    await this.store.savePatient({ ...p, age: s.patient.age || p.age, sex: s.patient.sex || p.sex, chronic, visitCount: number, lastVisitAt: visit.date, updatedAt: visit.date });
+    await this.store.savePatient({ ...p, age: s.patient.age || p.age, sex: s.patient.sex || p.sex, lastFields: s.fields, visitCount: number, lastVisitAt: visit.date, updatedAt: visit.date });
     await refreshPatients(this);
     s.saved = { number, ref: p.ref };
     return visit;
   }
 
-  printReport(report) {
-    this.$("#fsa-print").innerHTML = printHTML(this, report, false);
-    window.print();
+  printReport(report) { this.$("#fsa-print").innerHTML = printHTML(this, report, false); window.print(); }
+
+  /* ---------------- AI ---------------- */
+  async runAI(question = "") {
+    if (this.ai.busy) return;
+    this.ai.busy = true; this.ai.error = null; renderResults(this);
+    try {
+      this.compute();
+      const res = await askAI(this, question);
+      this.session.ai = { at: new Date().toISOString(), model: res.model, provider: res.provider, ms: res.ms, question, data: res.data, fp: fingerprint(this) };
+    } catch (err) { this.ai.error = err.message; }
+    this.ai.busy = false;
+    if (this.screen === "results") { const y = window.scrollY; renderResults(this); window.scrollTo(0, y); }
   }
 
-  /* ---------------- reasoning pipeline ---------------- */
-  compute() {
-    const s = this.session, recs = {};
-    for (const st of STEPS) {
-      if (s.skipped[st.id]) continue;
-      const rec = s.records[st.id], rating = s.ratings[st.id];
-      if (rec || rating) recs[st.id] = { ...(rec || { frames: [], total: 0 }), rating: rating || {} };
-    }
-    const A = analyzeAll(recs);
-    const F0 = buildFindings(A);
-    const F = reviewed(F0, s.review);
-    const P = findPatterns(F, A);
-    const G = grade(P, A, F);
-    const R = reason({ F, P, history: s.history, checklist: s.checklist, patient: s.patient });
-    this.c = { A, F0, F, P, G, R };
-    return this.c;
+  /** Add a planned (not yet recorded) capture, e.g. from an AI suggestion or a routine. */
+  addPlanned(label, seconds = 5, reference = false) {
+    const s = this.session, l = String(label || "").trim();
+    if (!l || s.captures.some(c => c.label.toLowerCase() === l.toLowerCase())) return false;
+    s.captures.push({ id: uid(), label: l, seconds: Number.isFinite(+seconds) ? Math.max(0, Math.min(30, +seconds)) : 5, reference: !!reference && !s.captures.some(c => c.reference), notes: "" });
+    return true;
   }
 
-  /* ---------------- history ---------------- */
-  historyHTML() {
-    const seg = (name, opts, yn) => html`<div class="seg${yn ? " yn" : ""}" role="radiogroup">${opts.map(([v, l]) => html`<label><input type="radio" name="${name}" value="${v}">${t(l)}</label>`)}</div>`;
-    return html`
-<div id="fsa-hflags" class="stack"></div>
-<div class="card">
-  <h2>${t("This visit")}</h2>
-  <div class="form" id="fsa-visit">
-    <label class="field"><span>${t("Age (years)")}</span><input type="number" name="age" min="0" max="120" inputmode="numeric"></label>
-    <label class="field"><span>${t("Sex")}</span><select name="sex"><option value="">${t("Not recorded")}</option><option value="female">${t("Female")}</option><option value="male">${t("Male")}</option><option value="other">${t("Other")}</option></select></label>
-    <label class="field"><span>${t("Side reported by patient or referrer")}</span><select name="reportedSide"><option value="">${t("Not stated")}</option><option value="R">${t("Patient's right")}</option><option value="L">${t("Patient's left")}</option><option value="both">${t("Both sides")}</option></select></label>
-    <label class="field"><span>${t("Reason for assessment")}</span><select name="reason"><option value="">${t("Not stated")}</option><option value="new">${t("New facial asymmetry or weakness")}</option><option value="followup">${t("Follow-up of a known condition")}</option><option value="screen">${t("Screening (speech, swallowing or oral-motor)")}</option></select></label>
-  </div>
-  <p class="note">${t("This tool helps you examine systematically. It measures, suggests possibilities and explains its reasoning. You make the diagnosis.")}</p>
-</div>
-${HISTORY.map(g => html`
-<div class="card">
-  <h2>${t(g.group)}</h2>
-  ${g.items.map(i => html`<div class="q"><div class="qt">${t(i.q)}</div>${seg("h_" + i.key, i.type === "yn" ? YN_OPTIONS : i.options, i.type === "yn")}</div>`)}
-</div>`)}
-<div class="row"><button data-go="patient">${t("Back")}</button><button class="primary" data-go="exam">${t("Continue to guided exam")}</button></div>
-<p class="note">${t("Unanswered questions are treated as unknown. Long-term conditions (diabetes, blood pressure, thyroid, cancer, MS) carry over to the next visit. Results update automatically when you change answers.")}</p>`.s;
-  }
-
-  syncHistoryForm() {
-    const s = this.session;
-    this.$$("#fsa-visit input, #fsa-visit select").forEach(el => { el.value = s.patient[el.name] || ""; });
-    this.$$("[data-screen=history] input[type=radio]").forEach(el => { el.checked = s.history[el.name.slice(2)] === el.value; });
-  }
-
-  bindForms() {
-    this.$("#fsa-visit").addEventListener("input", e => { const el = e.target; if (el.name) { this.session.patient[el.name] = el.value; this.compute(); } });
-    this.$("[data-screen=history]").addEventListener("change", e => {
-      const el = e.target; if (!el.name || !el.name.startsWith("h_")) return;
-      this.session.history[el.name.slice(2)] = el.value;
-      this.compute(); this.renderHistoryFlags();
-    });
-  }
-
-  renderHistoryFlags() {
-    const flags = this.c.R.flags.filter(f => f.level === "emergency");
-    this.$("#fsa-hflags").innerHTML = flags.map(f => html`<div class="flag emergency" role="alert"><b>${t(f.title)}</b>${t(f.text)}</div>`.s).join("");
-  }
-
-  /* ---------------- guided exam ---------------- */
+  /* ---------------- examine screen ---------------- */
   examHTML() {
     return html`
 <div class="stage">
@@ -231,35 +205,119 @@ ${HISTORY.map(g => html`
   <p class="note">${t("Right and left always mean the patient's own sides. Without mirroring, the patient's right appears on the left of the screen. Images and video stay on this device.")}</p>
 </div>
 <div class="stack">
-  <div class="card stepcard" id="fsa-step"></div>
-  <div class="card steplist"><h2>${t("Examination steps")}</h2><div id="fsa-steps"></div></div>
+  <div class="card" id="fsa-composer"></div>
+  <div class="card" id="fsa-caps"></div>
 </div>`.s;
   }
 
+  knownLabels() {
+    const set = new Set();
+    for (const tp of this.templates) for (const it of tp.items) set.add(it.label);
+    for (const c of this.session.captures) set.add(c.label);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
+  renderComposer() {
+    const box = this.$("#fsa-composer"); if (!box) return;
+    const s = this.session, rec = !!this.rec, hasRef = s.captures.some(c => c.reference);
+    const kind = this.vision ? this.vision.kind : "none";
+    box.innerHTML = html`
+<h2>${t("New capture")}</h2>
+<label class="field"><span>${t("What will the patient do? (your own words)")}</span>
+  <input type="text" id="fsa-label" list="fsa-labels" autocomplete="off" placeholder="${t("e.g. Relaxed face, Raise eyebrows, Smile, Say “pa-ta-ka”")}" ${rec ? raw("disabled") : ""}></label>
+<datalist id="fsa-labels">${this.knownLabels().map(l => html`<option value="${l}">`)}</datalist>
+<div class="row" style="margin-top:8px;align-items:flex-end">
+  <label class="field" style="width:130px"><span>${t("Length")}</span><select id="fsa-dur" ${rec ? raw("disabled") : ""}>${DURATIONS.map(([v, l]) => html`<option value="${v}" ${v === 5 ? raw("selected") : ""}>${t(l)}</option>`)}</select></label>
+  <label class="note" style="margin:0 0 8px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="fsa-ref" ${hasRef ? "" : raw("checked")} ${rec ? raw("disabled") : ""}>${t("Reference capture")}</label>
+</div>
+<p class="note" style="margin-top:4px">${hasRef ? t("Other captures are measured as change from the reference.") : t("Mark one capture as the reference (usually a relaxed face). Other captures are then measured as change from it.")}</p>
+<div class="prog" id="fsa-prog"><i></i></div>
+<div class="row">
+  ${rec ? html`<button class="danger" data-cap-act="stop">${t("Stop")}</button>` : html`<button class="primary" data-cap-act="record" ${kind === "none" || s.locked ? raw("disabled") : ""}>${kind === "image" ? t("Measure this image") : t("Record")}</button>`}
+  ${kind === "none" ? html`<span class="note" style="margin:0">${t("Start the camera or upload media first.")}</span>` : ""}
+</div>`.s;
+  }
+
+  renderCaptures() {
+    const box = this.$("#fsa-caps"); if (!box) return;
+    const s = this.session, byId = Object.fromEntries(this.m.map(x => [x.id, x]));
+    const line = c => {
+      const m = byId[c.id];
+      if (!m) return "";
+      if (!m.valid) return html`<div class="note" style="color:var(--amber)">${t(m.reason)}</div>`;
+      const top = m.rows.slice(0, 2).map(r => `${t(r.name)}: R ${m.mode === "change" && r.R > 0 ? "+" : ""}${r.R}${r.unit ? " " + r.unit : ""}, L ${m.mode === "change" && r.L > 0 ? "+" : ""}${r.L}${r.unit ? " " + r.unit : ""}`).join(" · ");
+      return html`<div class="note" style="margin-top:4px">${m.mode === "change" ? t("Largest change") + ": " : t("Absolute values") + ": "}${top} <span class="mute">(${t("{n} frames", { n: m.q.ok })})</span></div>`;
+    };
+    box.innerHTML = html`
+<div class="row" style="justify-content:space-between"><h2 style="margin:0">${t("Captures")} ${s.captures.length ? html`<span class="pill">${s.captures.filter(c => c.rec).length}/${s.captures.length}</span>` : ""}</h2></div>
+<div class="row" style="margin:10px 0">
+  <select id="fsa-tpl" style="flex:1;min-width:160px" aria-label="${t("My routines")}"><option value="">${this.templates.length ? t("Load one of my routines…") : t("No saved routines yet")}</option>${this.templates.map(tp => html`<option value="${tp.id}">${tp.name} (${tp.items.length})</option>`)}</select>
+  <button class="small" data-cap-act="save-tpl" ${s.captures.length ? "" : raw("disabled")}>${t("Save as my routine")}</button>
+  <button class="small danger" data-cap-act="del-tpl" ${this.templates.length ? "" : raw("disabled")}>${t("Delete routine")}</button>
+</div>
+${s.captures.length ? html`<ol class="caplist">${s.captures.map(c => html`
+  <li class="capitem ${c.rec ? "" : "planned"}">
+    <div class="row" style="justify-content:space-between;gap:6px">
+      <div><span class="dot ${c.rec ? "done" : ""}">${c.rec ? "✓" : ""}</span> <b>${c.label}</b> ${c.reference ? html`<span class="pill possible">${t("Reference")}</span>` : ""} <span class="mute" style="font-size:12.5px">${c.seconds ? c.seconds + " s" : t("Photo")}</span></div>
+      <div class="row" style="gap:6px">
+        <button class="small ${c.rec ? "" : "primary"}" data-cap-rec="${c.id}" ${this.rec || s.locked || !this.vision || this.vision.kind === "none" ? raw("disabled") : ""}>${c.rec ? t("Record again") : t("Record")}</button>
+        ${!c.reference ? html`<button class="small" data-cap-refset="${c.id}" ${s.locked ? raw("disabled") : ""}>${t("Make reference")}</button>` : ""}
+        <button class="small danger" data-cap-del="${c.id}" aria-label="${t("Remove {c}", { c: c.label })}" ${s.locked ? raw("disabled") : ""}>✕</button>
+      </div>
+    </div>
+    ${line(c)}
+    <textarea class="capnotes" data-cap-notes="${c.id}" placeholder="${t("Your observations (optional)")}" ${s.locked ? raw("disabled") : ""}>${c.notes || ""}</textarea>
+  </li>`)}</ol>` : html`<p class="mute" style="margin:0">${t("No captures yet. You decide the examination: type what you want the patient to do, record it, and repeat. Load one of your routines, or ask the AI for suggestions on the Findings screen.")}</p>`}
+<div class="row" style="margin-top:12px"><button class="primary" data-go="results" ${s.captures.some(c => c.rec) ? "" : raw("disabled")}>${t("View findings and ask the AI")}</button></div>`.s;
+  }
+
   bindExam() {
-    const vp = this.$("#fsa-vp");
-    this.$("[data-screen=exam]").addEventListener("click", e => {
+    const vp = this.$("#fsa-vp"), sec = this.$("[data-screen=exam]");
+    sec.addEventListener("click", async e => {
       const b = e.target.closest("button"); if (!b) return;
+      const s = this.session;
       if (b.dataset.src === "camera") this.toggleCamera();
       else if (b.dataset.src === "video") this.$("#fsa-vin").click();
       else if (b.dataset.src === "image") this.$("#fsa-iin").click();
-      else if (b.dataset.step) { this.cancelRecording(); this.cur = b.dataset.step; this.renderStep(); }
-      else if (b.dataset.do) this.stepAction(b.dataset.do);
+      else if (b.dataset.capAct === "record") this.startRecording(null);
+      else if (b.dataset.capAct === "stop") { this.cancelRecording(); this.renderComposer(); this.renderCaptures(); }
+      else if (b.dataset.capRec) this.startRecording(b.dataset.capRec);
+      else if (b.dataset.capRefset) { s.captures.forEach(c => { c.reference = c.id === b.dataset.capRefset; }); this.compute(); this.renderCaptures(); this.renderComposer(); }
+      else if (b.dataset.capDel) {
+        const c = s.captures.find(x => x.id === b.dataset.capDel);
+        if (c && c.rec && !confirm(t("Remove “{c}” and its recording?", { c: c.label }))) return;
+        s.captures = s.captures.filter(x => x.id !== b.dataset.capDel); this.compute(); this.renderCaptures(); this.renderComposer();
+      }
+      else if (b.dataset.capAct === "save-tpl") {
+        const name = prompt(t("Name this routine (e.g. “My facial palsy routine”):"));
+        if (!name || !name.trim()) return;
+        await this.store.saveTemplate({ id: uid(), name: name.trim(), items: s.captures.map(c => ({ label: c.label, seconds: c.seconds, reference: !!c.reference })), createdAt: new Date().toISOString() });
+        this.templates = await this.store.listTemplates(); this.renderCaptures();
+      }
+      else if (b.dataset.capAct === "del-tpl") {
+        const id = this.$("#fsa-tpl").value, tp = this.templates.find(x => x.id === id);
+        if (!tp) { alert(t("Choose a routine in the list first.")); return; }
+        if (!confirm(t("Delete the routine “{n}”?", { n: tp.name }))) return;
+        await this.store.deleteTemplate(id); this.templates = await this.store.listTemplates(); this.renderCaptures();
+      }
     });
-    this.$("[data-screen=exam]").addEventListener("change", e => {
+    sec.addEventListener("change", e => {
       const el = e.target;
       if (el.id === "fsa-mirror") vp.classList.toggle("mirror", el.checked);
       if (el.id === "fsa-vin" || el.id === "fsa-iin") {
         const f = el.files[0]; el.value = ""; if (!f) return;
         (el.id === "fsa-vin" ? this.vision.loadVideo(f) : this.vision.loadImage(f)).then(() => this.afterSource(), err => this.msg(t("Could not open the file: {e}", { e: err.message }), "warn"));
       }
-      if (el.name && el.name.startsWith("r_") && !this.session.locked) {
-        const [, step, key] = el.name.split("|");
-        (this.session.ratings[step] ||= {})[key] = el.value;
-        delete this.session.skipped[step];
-        this.compute(); this.renderStepResult(); this.renderStepList();
+      if (el.id === "fsa-tpl" && el.value) {
+        const tp = this.templates.find(x => x.id === el.value);
+        if (tp) { tp.items.forEach(it => this.addPlanned(it.label, it.seconds, it.reference)); this.renderCaptures(); this.renderComposer(); }
       }
     });
+    sec.addEventListener("input", e => {
+      const id = e.target.dataset.capNotes;
+      if (id) { const c = this.session.captures.find(x => x.id === id); if (c) c.notes = e.target.value; }
+    });
+    sec.addEventListener("keydown", e => { if (e.target.id === "fsa-label" && e.key === "Enter") { e.preventDefault(); this.startRecording(null); } });
     if (this.cfg.mirrorPreview) { this.$("#fsa-mirror").checked = true; vp.classList.add("mirror"); }
   }
 
@@ -272,6 +330,7 @@ ${HISTORY.map(g => html`
       this.$$("[data-src]").forEach(b => { b.disabled = false; });
       this.$("#fsa-empty").textContent = t("Start the camera, or upload a video or image of the patient.");
       this.$("#fsa-mode").textContent = offline ? t("model: on device") : t("model: online");
+      if (this.cfg.autoStartCamera && this.screen === "exam" && this.vision.kind === "none") this.toggleCamera();
     } catch (err) {
       this.$("#fsa-empty").textContent = t("Could not load the face model: {e}. Serve this folder over http(s) or localhost.", { e: err.message });
     }
@@ -279,7 +338,7 @@ ${HISTORY.map(g => html`
 
   async toggleCamera() {
     const v = this.vision;
-    if (v.kind === "camera") { this.cancelRecording(); v.stop(); this.afterSource(); return; }
+    if (v.kind === "camera") { this.cancelRecording(true); v.stop(); this.afterSource(); return; }
     try { await v.startCamera(); this.afterSource(); }
     catch (err) { this.msg(t("Camera unavailable: {e}. Allow camera access and try again.", { e: err.message }), "warn"); }
   }
@@ -290,12 +349,10 @@ ${HISTORY.map(g => html`
     this.$("#fsa-msg").hidden = k === "none";
     this.$("#fsa-vp").style.aspectRatio = k === "none" ? "" : String(this.vision.aspect);
     this.$("[data-src=camera]").textContent = k === "camera" ? t("Stop camera") : t("Start camera");
-    this.renderStep();
+    this.renderComposer(); this.renderCaptures();
   }
 
-  msg(text, tone = "") {
-    const m = this.$("#fsa-msg"); m.hidden = false; m.textContent = text; m.className = "vp-msg " + tone;
-  }
+  msg(text, tone = "") { const m = this.$("#fsa-msg"); m.hidden = false; m.textContent = text; m.className = "vp-msg " + tone; }
 
   onFrame(f) {
     const now = performance.now();
@@ -316,75 +373,69 @@ ${HISTORY.map(g => html`
   }
 
   /* ---------------- recording ---------------- */
-  stepAction(act) {
-    const i = STEPS.findIndex(s => s.id === this.cur);
-    if (act === "record") this.startRecording();
-    else if (act === "stop") { this.cancelRecording(); this.renderStep(); }
-    else if (act === "capture") this.capturePhoto();
-    else if (act === "skip") { this.cancelRecording(); this.session.skipped[this.cur] = true; this.compute(); this.next(i); }
-    else if (act === "next") this.next(i);
-    else if (act === "prev" && i > 0) { this.cur = STEPS[i - 1].id; this.renderStep(); }
-    else if (act === "results") this.go("results");
-  }
-
-  next(i) {
-    if (i < STEPS.length - 1) { this.cur = STEPS[i + 1].id; this.renderStep(); } else this.go("results");
-  }
-
   newRec() { return { frames: [], total: 0, noFace: 0, badPose: 0, single: false, evidence: null, at: new Date().toISOString(), source: this.vision.kind }; }
+  slim(f) { return { t: f.t, m: f.m, pose: f.pose, ok: f.ok, still: f.still }; }
 
-  startRecording() {
-    const step = STEP[this.cur], v = this.vision;
-    if (!v || v.kind === "none") { this.msg(t("Start the camera or upload media first."), "warn"); return; }
-    if (this.session.locked) { this.msg(t("This session is locked. Start a new patient to record again."), "warn"); return; }
+  /** capId: record a listed capture; null: create one from the composer. */
+  startRecording(capId) {
+    const v = this.vision, s = this.session;
     if (this.rec) return;
-    if (step.id !== "rest" && !this.session.records.rest) { this.msg(t("Record the resting face first: every movement is measured against it."), "warn"); }
-    if (v.kind === "image") {
-      if (!["rest", "move"].includes(step.kind)) { this.msg(t("This step needs the live camera or a video."), "warn"); return; }
+    if (!v || v.kind === "none") { this.msg(t("Start the camera or upload media first."), "warn"); return; }
+    if (s.locked) { this.msg(t("This examination is locked. Start a new one to record again."), "warn"); return; }
+    let cap = capId ? s.captures.find(c => c.id === capId) : null;
+    if (!cap) {
+      const input = this.$("#fsa-label"), label = (input.value || "").trim() || t("Capture {n}", { n: s.captures.length + 1 });
+      const existing = s.captures.find(c => c.label.toLowerCase() === label.toLowerCase());
+      const reference = this.$("#fsa-ref").checked;
+      if (existing) cap = existing;
+      else { cap = { id: uid(), label, seconds: +this.$("#fsa-dur").value, reference: false, notes: "" }; s.captures.push(cap); }
+      if (reference) s.captures.forEach(c => { c.reference = c === cap; });
+    }
+    const photo = cap.seconds === 0 || v.kind === "image";
+    if (photo) {
       const f = v.latest, rec = this.newRec();
       rec.single = true; rec.total = 1;
       if (!f || !f.face) rec.noFace = 1; else { if (!f.ok) rec.badPose = 1; rec.frames.push(this.slim(f)); }
       rec.evidence = v.snapshot();
-      this.finishRecording(step, rec); return;
+      this.finishRecording(cap, rec); return;
     }
     if (v.kind === "video" && v.video.paused) v.video.play().catch(() => {});
-    const count = v.kind === "camera" ? 3 : 0;
-    this.rec = { step, rec: this.newRec(), phase: "count", best: -Infinity, lastShot: 0 };
-    const say = this.$("#fsa-say"); say.textContent = t(step.say); say.classList.add("on");
-    this.renderStepCard();
+    this.rec = { cap, rec: this.newRec(), phase: "count", best: -Infinity, lastShot: 0 };
+    const say = this.$("#fsa-say"); say.textContent = cap.label; say.classList.add("on");
+    this.renderComposer(); this.renderCaptures();
     const cd = this.$("#fsa-count");
-    let n = count;
-    const tickCount = () => {
-      if (!this.rec || this.rec.step !== step) return;
-      if (n > 0) { cd.textContent = n; cd.classList.add("on"); n--; this.rec.timer = setTimeout(tickCount, 1000); return; }
+    let n = v.kind === "camera" ? 3 : 0;
+    const tick = () => {
+      if (!this.rec || this.rec.cap !== cap) return;
+      if (n > 0) { cd.textContent = n; cd.classList.add("on"); n--; this.rec.timer = setTimeout(tick, 1000); return; }
       cd.classList.remove("on");
       this.rec.phase = "rec"; this.rec.t0 = performance.now();
-      const dur = step.dur * 1000, bar = this.$("#fsa-prog i"), recEl = this.$("#fsa-rec");
+      const dur = cap.seconds * 1000, recEl = this.$("#fsa-rec");
       recEl.classList.add("on");
       this.rec.timer = setInterval(() => {
-        const el = performance.now() - this.rec.t0;
+        const el = performance.now() - this.rec.t0, bar = this.$("#fsa-prog i");
         if (bar) bar.style.width = Math.min(100, el / dur * 100) + "%";
         recEl.textContent = "● " + Math.max(0, Math.ceil((dur - el) / 1000)) + " s";
-        if (el >= dur) { const r = this.rec; this.cancelRecording(true); this.finishRecording(step, r.rec); }
+        if (el >= dur) { const r = this.rec; this.cancelRecording(true); this.finishRecording(cap, r.rec); }
       }, 100);
     };
-    tickCount();
+    tick();
   }
 
-  slim(f) { return { t: f.t, m: f.m, pose: f.pose, ok: f.ok, still: f.still }; }
-
   collect(f) {
-    const R = this.rec, rec = R.rec, step = R.step;
+    const R = this.rec, rec = R.rec, cap = R.cap;
     rec.total++;
     if (!f.face) { rec.noFace++; return; }
     if (!f.ok) rec.badPose++;
     rec.frames.push(this.slim(f));
     if (!f.ok) return;
     const now = performance.now(), el = now - R.t0;
-    if ((step.kind === "move" || step.kind === "repeat") && this.restM) {
-      const sc = stepScore(step, f.m, this.restM);
+    if (!cap.reference && this.refBase) {
+      // evidence frame = moment of largest change from the reference
+      const ref = this.refBase.m;
+      const sc = METRICS.reduce((a, mt) => a + Math.abs(mt.value(f.m, "R") - mt.value(ref, "R")) + Math.abs(mt.value(f.m, "L") - mt.value(ref, "L")), 0);
       if (sc > R.best && now - R.lastShot > 150) { R.best = sc; R.lastShot = now; rec.evidence = this.vision.snapshot(); }
-    } else if (!rec.evidence && el >= step.dur * 400) rec.evidence = this.vision.snapshot();
+    } else if (!rec.evidence && el >= cap.seconds * 400) rec.evidence = this.vision.snapshot();
     this.msg(t("Recording… {n} usable frames", { n: rec.frames.filter(x => x.ok).length }), "ok");
   }
 
@@ -396,77 +447,13 @@ ${HISTORY.map(g => html`
     if (!keep) this.msg(t("Recording stopped. Nothing was saved."), "warn");
   }
 
-  finishRecording(step, rec) {
-    const s = this.session;
+  finishRecording(cap, rec) {
     if (!rec.evidence && rec.frames.length) rec.evidence = this.vision.snapshot();
-    s.records[step.id] = rec; delete s.skipped[step.id];
+    cap.rec = rec;
     this.compute();
-    if (step.id === "rest") this.restM = this.c.A.rest && this.c.A.rest.valid ? this.c.A.rest.m : null;
-    this.renderStep();
-  }
-
-  capturePhoto() {
-    const v = this.vision, step = STEP[this.cur];
-    if (!v || v.kind === "none") { this.msg(t("Start the camera or upload media first."), "warn"); return; }
-    if (this.session.locked) { this.msg(t("This session is locked. Start a new patient to record again."), "warn"); return; }
-    const rec = this.newRec(), f = v.latest;
-    rec.single = true; rec.total = 1;
-    if (f && f.face) rec.frames.push(this.slim(f)); else rec.noFace = 1;
-    rec.evidence = v.snapshot();
-    this.session.records[step.id] = rec; delete this.session.skipped[step.id];
-    this.compute(); this.renderStep();
-  }
-
-  /* ---------------- step rendering ---------------- */
-  status(id) {
-    const s = this.session, st = STEP[id];
-    if (s.skipped[id]) return "skip";
-    if (st.kind === "rate") return Object.keys(s.ratings[id] || {}).length ? "done" : "pending";
-    if (!s.records[id]) return "pending";
-    const a = id === "rest" ? this.c.A.rest : this.c.A.steps[id];
-    if (!a || !a.valid || a.q.ratio < T.validFrameRatio) return "warn";
-    return "done";
-  }
-
-  renderStep() { this.renderStepCard(); this.renderStepList(); }
-
-  renderStepList() {
-    const icon = { done: "✓", warn: "!", skip: "–", pending: "" };
-    this.$("#fsa-steps").innerHTML = GROUPS.map(g => html`
-<div class="gname">${t(g.name)}</div>
-<ol>${STEPS.filter(s => s.group === g.id).map(s => { const st = this.status(s.id); return html`<li><button data-step="${s.id}" aria-current="${s.id === this.cur}"><span class="dot ${st}">${icon[st]}</span>${t(s.title)}${s.required ? html` <span class="pill">${t("required")}</span>` : ""}</button></li>`; })}</ol>`.s).join("");
-  }
-
-  renderStepCard() {
-    const step = STEP[this.cur], i = STEPS.indexOf(step), g = GROUPS.find(x => x.id === step.group);
-    const v = this.vision, kind = v ? v.kind : "none", recording = !!this.rec;
-    const canRecord = step.kind !== "rate" && kind !== "none" && !(kind === "image" && !["rest", "move"].includes(step.kind));
-    const ratings = step.rating ? html`<div class="stack" style="gap:8px;margin-top:6px">${step.rating.map(r => html`
-      <div><div class="note" style="margin:0 0 4px;color:var(--text)">${t(r.label)}</div>
-      <div class="seg">${r.options.map(([val, l]) => html`<label><input type="radio" name="r_|${step.id}|${r.key}" value="${val}" ${(this.session.ratings[step.id] || {})[r.key] === val ? raw("checked") : ""}>${t(l)}</label>`)}</div></div>`)}</div>` : "";
-    this.$("#fsa-step").innerHTML = html`
-<div class="grp">${t(g.name)} · ${t("Step {n} of {total}", { n: i + 1, total: STEPS.length })}</div>
-<h2>${t(step.title)}</h2>
-<p class="say">“${t(step.say)}”</p>
-<p class="watch"><b>${t("Watch for:")}</b> ${t(step.watch)}</p>
-${step.kind !== "rate" ? html`<p class="note" style="margin:0 0 6px">${t("Recording length: {s} s.", { s: step.dur })} ${step.kind === "rest" ? t("Only still frames are used; blinks and talking are ignored.") : step.kind === "move" ? t("Ask for maximum effort and hold it.") : ""}</p>` : ""}
-${ratings}
-<div class="prog" id="fsa-prog"><i></i></div>
-<div class="row">
-  ${step.kind !== "rate" ? (recording ? html`<button class="danger" data-do="stop">${t("Stop")}</button>` : html`<button class="primary" data-do="record" ${canRecord ? "" : raw("disabled")}>${this.session.records[step.id] ? t("Record again") : kind === "image" ? t("Measure this image") : t("Record")}</button>`) : html`<button data-do="capture" ${kind === "none" ? raw("disabled") : ""}>${t("Capture photo (optional)")}</button>`}
-  <button data-do="prev" ${i === 0 || recording ? raw("disabled") : ""}>${t("Back")}</button>
-  <button data-do="skip" ${step.required || recording ? raw("disabled") : ""}>${t("Skip")}</button>
-  <button data-do="next" ${recording ? raw("disabled") : ""}>${i === STEPS.length - 1 ? t("View results") : t("Next")}</button>
-</div>
-${kind === "image" && !["rest", "move"].includes(step.kind) && step.kind !== "rate" ? html`<p class="note">${t("This step needs the live camera or a video.")}</p>` : ""}
-${kind === "video" ? html`<p class="note">${t("Video: play or seek to the moment the patient performs this movement, then select Record.")}</p>` : ""}
-<div id="fsa-stepres"></div>
-<div class="row" style="margin-top:12px"><button data-do="results" ${this.session.records.rest ? "" : raw("disabled")}>${t("Finish exam and view results")}</button></div>`.s;
-    this.renderStepResult();
-  }
-
-  renderStepResult() {
-    const box = this.$("#fsa-stepres"); if (!box) return;
-    box.innerHTML = stepSummary(this, this.cur);
+    const input = this.$("#fsa-label"); if (input) input.value = "";
+    this.renderComposer(); this.renderCaptures();
+    const nextPlanned = this.session.captures.find(c => !c.rec);
+    this.msg(nextPlanned ? t("Saved “{c}”. Next on your list: “{n}”.", { c: cap.label, n: nextPlanned.label }) : t("Saved “{c}”.", { c: cap.label }), "ok");
   }
 }

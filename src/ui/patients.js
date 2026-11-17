@@ -3,10 +3,7 @@
 import { t, sideName } from "../i18n/index.js";
 import { html, raw, uid, download } from "../util.js";
 import { trend } from "../engine/compare.js";
-import { STRENGTH_LABEL } from "../engine/reason.js";
 
-/* History answers that describe the patient, not the episode: carried into the next visit. */
-export const CHRONIC = ["diabetes", "hypertension", "thyroid", "cancer", "ms"];
 
 const fmtDate = d => (d ? new Date(d).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "–");
 const label = p => p.ref || t("Unnamed patient") + " · " + p.id.slice(0, 6);
@@ -50,17 +47,17 @@ function formHTML(app) {
 }
 
 function visitHTML(app, v) {
-  const r = v.report, top = (r.possibilities || []).slice(0, 3);
+  const r = v.report, caps = (r.captures || []).filter(c => c.valid), ai = r.aiAssistant;
+  const alerts = r.safetyAlerts || r.redFlags || [];
   return html`
 <details class="poss" data-open="visit:${v.id}" ${app.open.has("visit:" + v.id) ? raw("open") : ""}>
   <summary>${t("Visit {n}", { n: v.number })} · ${fmtDate(v.date)}
-    ${r.grading ? html`<span class="pill">${t("HB")} ${r.grading.houseBrackmannEstimate}</span>` : ""}
-    ${r.redFlags && r.redFlags.some(f => f.level === "emergency") ? html`<span class="pill emergency">${t("Red flag")}</span>` : ""}</summary>
+    <span class="pill">${t("{n} captures", { n: caps.length })}</span>
+    ${alerts.some(f => f.level === "emergency") ? html`<span class="pill emergency">${t("Safety alert")}</span>` : ""}</summary>
   <div class="body">
-    <p style="margin:0 0 6px">${t(r.pattern ? r.pattern.summary : "")}</p>
+    ${caps.length ? html`<p class="note" style="margin:0 0 6px">${t("Captures")}: ${caps.map(c => c.label).join(", ")}</p>` : ""}
     ${r.clinicianImpression ? html`<p style="margin:0 0 6px"><b>${t("Impression")}:</b> ${r.clinicianImpression}</p>` : ""}
-    ${top.length ? html`<h4>${t("Top possibilities")}</h4><ul>${top.map(p => html`<li>${t(p.name)} (${t(STRENGTH_LABEL[p.strength])})</li>`)}</ul>` : ""}
-    ${r.grading ? html`<p class="note">${t("House-Brackmann {hb} ({side}), Sunnybrook {sb}", { hb: r.grading.houseBrackmannEstimate, side: sideName(r.grading.side), sb: r.grading.sunnybrookEstimate.composite })}</p>` : ""}
+    ${ai && ai.summary ? html`<h4>${t("AI summary")} (${ai.model})</h4><p style="margin:0">${ai.summary}</p>` : ""}
     <div class="row" style="margin-top:8px">
       <button class="small" data-pa="visit-json" data-id="${v.id}">${t("Download JSON")}</button>
       <button class="small" data-pa="visit-print" data-id="${v.id}">${t("Print")}</button>
@@ -92,7 +89,7 @@ function detailHTML(app) {
     <tr><th></th>${tr.cols.map(c => html`<th>${t("Visit {n}", { n: c.number })}<br><span class="mute" style="font-weight:400">${fmtDate(c.date)}</span></th>`)}</tr>
     ${tr.rows.map(r => html`<tr><td>${t(r.label)}</td>${r.values.map(v => html`<td>${v}</td>`)}</tr>`)}
   </table></div>
-  <p class="note">${t("Symmetry = weaker side ÷ stronger side; 100% is perfectly symmetric. Changes under about 10 points are within measurement noise.")}</p>` : ""}
+  <p class="note">${t("Each row is a capture you recorded in two or more visits under the same name, with its largest measurement. You judge improvement.")}</p>` : ""}
   <h3>${t("Visits")}</h3>
   ${visits.length ? [...visits].reverse().map(v => visitHTML(app, v)) : html`<p class="mute">${t("No visits yet.")}</p>`}
 </div>`;
